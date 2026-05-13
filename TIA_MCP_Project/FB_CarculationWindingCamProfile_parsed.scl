@@ -1,0 +1,264 @@
+﻿    REGION Description header
+        // ============================================================================================================
+        (* (C)Copyright mPLUS (2025 of first release) - (2025 of last change)
+// -------------------------------------------------------------------------
+// Title: Carculation Winding Cam Profile 
+// Comment/Function: Ability to calculate the winding cam profile according to the thickness, width, and rotation direction of the JR
+// Library/Family: -
+// Author: Precision Motion Control Department/Lee Jin Sun
+// Tested on System: S7-1500 with FW version V4.0, TO V9.0
+// Engineering: TIA Portal V20
+// Restrictions: -
+// Requirements: S7-1500(T)
+// --------------------------------------------------------------------------
+// Change log table:
+// Version          | Date            | Signature       | Expert in charge | Changes applied
+// ------------------|----------------|-------------------|-----------------------|--------------------------
+// 001.000.000 |2025.12.17 | 0x00000000 | Lee Jin Sun           | First release
+// 001.000.001 |2025.12.23 | 0x00000000 | Lee Jin Sun           | Add Rotation Offset, (0,0) Location 
+ *)
+ //============================================================================================================
+    END_REGION
+
+(*Calculation of variables required before cam generation.*)
+REGION Pre Sequence
+    // Radian to Degree
+    stat_Rad2Deg :=  180/3.14159265359;
+    // Degree to Radian
+    stat_Deg2Rad := 3.14159265359 / 180;
+    // Radius
+    stat_Radius := SQRT(SQR(in_Height / 2) + SQR(in_Width / 2));
+    //Theta
+    stat_Theta := ATAN((in_Height/2)/(in_Width/2))*stat_Rad2Deg;
+    
+    IF in_magnification <= 0 THEN
+        stat_magnification := 1;
+    ELSE
+        stat_magnification := in_magnification;
+    END_IF;
+END_REGION
+
+REGION Main Sequence
+    IF NOT in_windingDirection  THEN
+        REGION CW
+            REGION 1st Rotation
+            // Sepa Clamp X,Z Axis Cam Profile #1
+            FOR tempi := 0 TO  DO
+                tempXi := tempi * stat_magnification;
+                IF tempi <= 180/stat_magnification THEN // 0 ~ 180 
+                    //X1
+                    inout_camProfileX1.x := tempXi;
+                    inout_camProfileX1.y := - stat_Radius * COS((stat_Theta - tempXi) * stat_Deg2Rad) ;
+                    // + W/2, start Position offset
+                    inout_camProfileX1.y := inout_camProfileX1.y + (in_Width / 2);
+                    
+                    //Z1
+                    inout_camProfileZ1.x := tempXi;
+                    inout_camProfileZ1.y := stat_Radius * SIN((stat_Theta - tempXi) * stat_Deg2Rad);
+                    // - H/2, start Position offset
+                    inout_camProfileZ1.y := inout_camProfileZ1.y - (in_Height / 2);
+                    
+                ELSIF tempi <= 270/stat_magnification THEN  // 181 ~ 270
+                    //X1
+                    inout_camProfileX1.x := tempXi;
+                    inout_camProfileX1.y := stat_Radius * COS((stat_Theta + tempXi) * stat_Deg2Rad) + in_Width;
+                    // + W/2
+                    inout_camProfileX1.y := inout_camProfileX1.y + (in_Width / 2);
+                    // X1 offest1
+                    inout_camProfileX1.y := inout_camProfileX1.y + (in_offset1 * (tempXi - 180) / 180);
+                    
+                    //Z1
+                    inout_camProfileZ1.x := tempXi;
+                    inout_camProfileZ1.y := stat_Radius * SIN((stat_Theta + tempXi) * stat_Deg2Rad);
+                    // - H/2
+                    inout_camProfileZ1.y := inout_camProfileZ1.y - (in_Height / 2);
+                    
+                ELSIF tempi <= 360/stat_magnification THEN     // 271 ~ 360
+                    //X1
+                    inout_camProfileX1.x := tempXi;
+                    inout_camProfileX1.y := stat_Radius * COS((tempXi - stat_Theta) * stat_Deg2Rad) + in_Width + in_Height;
+                    // + W/2
+                    inout_camProfileX1.y := inout_camProfileX1.y + (in_Width / 2);
+                    // X1 offest1
+                    inout_camProfileX1.y := inout_camProfileX1.y + (in_offset1 * (tempXi - 180) / 180);
+                    
+                    //Z1 
+                    inout_camProfileZ1.x := tempXi;
+                    inout_camProfileZ1.y := stat_Radius * SIN((tempXi-stat_Theta) * stat_Deg2Rad);
+                    // - H/2
+                    inout_camProfileZ1.y := inout_camProfileZ1.y - (in_Height / 2);
+                    
+                ELSE
+                    inout_camProfileX1.x :=0;
+                    inout_camProfileX1.y := 0;
+                    inout_camProfileZ1.x := 0;
+                    inout_camProfileZ1.y := 0;
+                END_IF;
+            END_FOR;
+        END_REGION
+        
+        REGION 2nd Rotation
+            // Sepa Clamp X,Z Axis Cam Profile #2
+            tempi := 0;
+            FOR tempi := 0 TO  DO
+                tempXi := tempi * stat_magnification;
+                IF tempi <= 90 / stat_magnification THEN // 0 ~ 90
+                    //X2
+                    inout_camProfileX2.x := tempXi;
+                    inout_camProfileX2.y := - stat_Radius * COS((stat_Theta + tempXi) * stat_Deg2Rad);
+                    // + W/2
+                    inout_camProfileX2.y := inout_camProfileX2.y + (in_Width / 2);
+                    // X2 Offset2
+                    inout_camProfileX2.y := inout_camProfileX2.y + (in_offset2 * (tempXi) / 180);
+                    
+                    //Z2
+                    inout_camProfileZ2.x := tempXi;
+                    inout_camProfileZ2.y := - stat_Radius * SIN((stat_Theta + tempXi) * stat_Deg2Rad);
+                    // - H/2
+                    inout_camProfileZ2.y := inout_camProfileZ2.y - (in_Height / 2);
+                    
+                ELSIF tempi <= 180 / stat_magnification THEN // 90 ~ 180 
+                    //X2
+                    inout_camProfileX2.x := tempXi;
+                    inout_camProfileX2.y := - stat_Radius * COS((tempXi - stat_Theta) * stat_Deg2Rad) + in_Height;
+                    // + W/2
+                    inout_camProfileX2.y := inout_camProfileX2.y + (in_Width / 2);
+                    // X2 Offset2
+                    inout_camProfileX2.y := inout_camProfileX2.y + (in_offset2 * (tempXi) / 180);
+                    
+                    //Z2
+                    inout_camProfileZ2.x := tempXi;
+                    inout_camProfileZ2.y := - stat_Radius * SIN((tempXi - stat_Theta) * stat_Deg2Rad);
+                    // - H/2
+                    inout_camProfileZ2.y := inout_camProfileZ2.y - (in_Height / 2);
+                    
+                ELSE
+                    inout_camProfileX2.x := 0;
+                    inout_camProfileX2.y := 0;
+                    inout_camProfileZ2.x := 0;
+                    inout_camProfileZ2.y := 0;
+                END_IF;
+            END_FOR;
+        END_REGION
+        END_REGION
+        
+    ELSE
+        REGION CCW
+            REGION 1st Rotation
+            // Sepa Clamp X,.Z Axis Cam Profile #1
+            FOR tempi := 0 TO  DO
+                tempXi := tempi * stat_magnification;
+                IF tempi <= 90/stat_magnification THEN // 0 ~ 90
+                    //X1
+                    inout_camProfileX1.x := tempXi;
+                    inout_camProfileX1.y := - stat_Radius * COS((stat_Theta + tempXi) * stat_Deg2Rad);
+                    // + W/2
+                    inout_camProfileX1.y := inout_camProfileX1.y + (in_Width / 2);
+                    
+                    //Z1
+                    inout_camProfileZ1.x := tempXi;
+                    inout_camProfileZ1.y := stat_Radius * SIN((stat_Theta + tempXi) * stat_Deg2Rad);
+                    // - H/2
+                    inout_camProfileZ1.y := inout_camProfileZ1.y - (in_Height / 2);
+                    
+                ELSIF tempi<= 180/stat_magnification THEN // 91 ~ 180
+                    // X1
+                    inout_camProfileX1.x := tempXi;
+                    inout_camProfileX1.y := - stat_Radius * COS((tempXi-stat_Theta) * stat_Deg2Rad)+in_Height;
+                    // + W/2
+                    inout_camProfileX1.y := inout_camProfileX1.y + (in_Width / 2);
+                    
+                    // Z1
+                    inout_camProfileZ1.x := tempXi;
+                    inout_camProfileZ1.y := stat_Radius * SIN((tempXi-stat_Theta) * stat_Deg2Rad);
+                    // - H/2
+                    inout_camProfileZ1.y := inout_camProfileZ1.y - (in_Height / 2);
+                      
+                  ELSIF tempi <= 270/stat_magnification THEN // 180 ~ 270
+                      // X1
+                      inout_camProfileX1.x := tempXi;
+                      inout_camProfileX1.y := stat_Radius * COS((stat_Theta + tempXi) * stat_Deg2Rad) + in_Width + in_Height;
+                      // + W/2
+                      inout_camProfileX1.y := inout_camProfileX1.y + (in_Width / 2);
+                      // X1 offest1
+                      inout_camProfileX1.y := inout_camProfileX1.y + (in_offset1 * (tempXi - 180) / 180);
+                      
+                      // Z1
+                      inout_camProfileZ1.x := tempXi;
+                      inout_camProfileZ1.y := - stat_Radius * SIN((stat_Theta + tempXi) * stat_Deg2Rad);
+                      // - H/2
+                      inout_camProfileZ1.y := inout_camProfileZ1.y - (in_Height / 2);
+                      
+                  ELSIF tempi <= 360/stat_magnification THEN // 270 ~ 360
+                      // X1
+                      inout_camProfileX1.x := tempXi;
+                      inout_camProfileX1.y := stat_Radius * COS((tempXi - stat_Theta) * stat_Deg2Rad) + in_Width + 2*in_Height;
+                      // + W/2
+                      inout_camProfileX1.y := inout_camProfileX1.y + (in_Width / 2);
+                      // X1 offest1
+                      inout_camProfileX1.y := inout_camProfileX1.y + (in_offset1 * (tempXi - 180) / 180);
+                      
+                    // Z1
+                      inout_camProfileZ1.x := tempXi;
+                      inout_camProfileZ1.y := - stat_Radius * SIN((tempXi - stat_Theta) * stat_Deg2Rad);
+                      // - H/2
+                      inout_camProfileZ1.y := inout_camProfileZ1.y - (in_Height / 2);
+                    
+                ELSE
+                    inout_camProfileX1.x := 0;
+                    inout_camProfileX1.y := 0;
+                    inout_camProfileZ1.x := 0;
+                    inout_camProfileZ1.y := 0;
+                END_IF;
+            END_FOR;
+            END_REGION
+            
+            REGION 2nd Rotation
+                // Sepa Clamp X,Z Axis Cam Profile #2
+                tempi := 0;
+                FOR tempi := 0 TO  DO
+                    tempXi := tempi * stat_magnification;
+                    IF tempi <= 90 / stat_magnification THEN // 0 ~ 90
+                        //X2
+                        inout_camProfileX2.x := tempXi;
+                        inout_camProfileX2.y := - stat_Radius * COS((stat_Theta + tempXi) * stat_Deg2Rad);
+                        // + W/2
+                        inout_camProfileX2.y := inout_camProfileX2.y + (in_Width / 2);
+                        // X2 Offset2
+                        inout_camProfileX2.y := inout_camProfileX2.y + (in_offset2 * (tempXi) / 180);
+                        
+                        //Z2
+                        inout_camProfileZ2.x := tempXi;
+                        inout_camProfileZ2.y := stat_Radius * SIN((stat_Theta + tempXi) * stat_Deg2Rad);
+                        // - H/2
+                        inout_camProfileZ2.y := inout_camProfileZ2.y - (in_Height / 2);
+                        
+                    ELSIF tempi <= 180 / stat_magnification THEN // 90 ~ 180 
+                        //X2
+                        inout_camProfileX2.x := tempXi;
+                        inout_camProfileX2.y := - stat_Radius * COS((tempXi - stat_Theta) * stat_Deg2Rad) + in_Height;
+                        // + W/2
+                        inout_camProfileX2.y := inout_camProfileX2.y + (in_Width / 2);
+                        // X2 Offset2
+                        inout_camProfileX2.y := inout_camProfileX2.y + (in_offset2 * (tempXi) / 180);
+                        
+                        //Z2
+                        inout_camProfileZ2.x := tempXi;
+                        inout_camProfileZ2.y := stat_Radius * SIN((tempXi - stat_Theta) * stat_Deg2Rad);
+                        // - H/2
+                        inout_camProfileZ2.y := inout_camProfileZ2.y - (in_Height / 2);
+                        
+                    ELSE
+                        inout_camProfileX2.x := 0;
+                        inout_camProfileX2.y := 0;
+                        inout_camProfileZ2.x := 0;
+                        inout_camProfileZ2.y := 0;
+                    END_IF;
+                END_FOR;
+            END_REGION
+        END_REGION
+    END_IF;
+    
+    END_REGION
+    
+

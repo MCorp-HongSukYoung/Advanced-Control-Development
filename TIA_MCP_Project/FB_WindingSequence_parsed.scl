@@ -1,0 +1,699 @@
+﻿FUNCTION_BLOCK "FB_WindingSequence"
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 0.1
+   VAR_INPUT 
+      cmdExecute : Bool;
+      cmdStop : Bool;
+      axis_virtual {InstructionName := 'TO_PositioningAxis'; LibVersion := '9.0'} : TO_PositioningAxis;
+      axis_Winding01R {InstructionName := 'TO_SynchronousAxis'; LibVersion := '9.0'} : TO_SynchronousAxis;
+      axis_winding02R {InstructionName := 'TO_SynchronousAxis'; LibVersion := '9.0'} : TO_SynchronousAxis;
+      axis_SepaGripperX {InstructionName := 'TO_SynchronousAxis'; LibVersion := '9.0'} : TO_SynchronousAxis;
+      axis_SepaGripperZ {InstructionName := 'TO_SynchronousAxis'; LibVersion := '9.0'} : TO_SynchronousAxis;
+      velocity : LReal;
+      windingXOffset : LReal;   // Recipe Sepa GripperX, winding start position
+      windingZOffset : LReal;   // Recipe Sepa GripperZ, winding start position
+   END_VAR
+
+   VAR_OUTPUT 
+      busy : Bool;
+      done : Bool;
+      error : Bool;
+      status : Word;
+   END_VAR
+
+   VAR_IN_OUT 
+      cam : Int;
+   END_VAR
+
+   VAR 
+      statCurrentState : DInt;
+      statNextState : DInt;
+      statStateChangeInProcess : Bool;
+      statPreviousState : Array[0..9] of DInt;
+      instHome_vr {InstructionName := 'MC_HOME'; LibVersion := '9.0'} : MC_HOME;
+      instGearIn_Winding {InstructionName := 'MC_GEARIN'; LibVersion := '9.0'} : MC_GEARIN;   // windingR01, WindingR02
+      instCamIn_Winding {InstructionName := 'MC_CAMIN'; LibVersion := '9.0'} : MC_CAMIN;   // VR, WindingR01
+      instCamIn_SepaGripperX {InstructionName := 'MC_CAMIN'; LibVersion := '9.0'} : MC_CAMIN;   // VR, Sepa GripperX
+      instCamIn_SepaGripperZ {InstructionName := 'MC_CAMIN'; LibVersion := '9.0'} : MC_CAMIN;   // VR, Sepa GripperZ
+      instMoveRelative {InstructionName := 'MC_MOVERELATIVE'; LibVersion := '9.0'} : MC_MOVERELATIVE;
+      instHalt_vr {InstructionName := 'MC_HALT'; LibVersion := '9.0'} : MC_HALT;
+      instHalt_Winding01R {InstructionName := 'MC_HALT'; LibVersion := '9.0'} : MC_HALT;
+      instHalt_SepaGripperX {InstructionName := 'MC_HALT'; LibVersion := '9.0'} : MC_HALT;
+      instHalt_SepaGripperZ {InstructionName := 'MC_HALT'; LibVersion := '9.0'} : MC_HALT;
+      statHomeExecute : Bool;
+      statGearInExecute : Bool;
+      statCamInExecute_winding : Bool;
+      statCamInExecute_SepaGripperX : Bool;
+      statCamInExecute_SepaGripperZ : Bool;
+      statMoveRelativeExecute : Bool;
+      statHaltExecute_All : Bool;
+      statHaltExecute_vr : Bool;
+      statHaltExecute_Winding : Bool;
+      statHaltExecute_SepaGripper : Bool;
+      statHaltStatusWord : Word;
+      statParameterMoveRelative : Struct
+         Distance : LReal;
+         Velocity : LReal;
+         Acc : LReal;
+         Dcc : LReal;
+         Jerk : LReal;
+      END_STRUCT;
+      statOldCam_X : DB_ANY;
+      statOldCam_Z : DB_ANY;
+      instRisingTrigger_cmdStop {InstructionName := 'R_TRIG'; LibVersion := '1.0'; S7_SetPoint := 'False'} : R_TRIG;
+      instRisingTrigger_PrepareSection {InstructionName := 'R_TRIG'; LibVersion := '1.0'} : R_TRIG;
+      statSecondX_SlaveOffset { S7_SetPoint := 'True'} : LReal;
+      statSecondZ_SlaveOffset : LReal;
+      statX_MoveDistanceCalc : Real;
+   END_VAR
+
+   VAR CONSTANT 
+      CAM_FIRST : Int := 0;
+      CAM_SECOND : Int := 1;
+      STATE_STATUS_CHECK : DInt := 3;
+      STATE_VRAXIS_POWERON : DInt := 4;
+      STATE_VRAXIS_HOME : DInt := 5;
+      STATE_GEARIN_WINDING : DInt := 6;
+      STATE_CAMIN_FIRST : DInt := 7;
+      STATE_ROTATION_FIRST : DInt := 8;
+      STATE_CAMIN_SECOND : DInt := 9;
+      STATE_ROTATION_SECOND : DInt := 10;
+      STATE_CAMOUT : DInt := 11;
+      STATE_HALT : DInt := 20;
+   END_VAR
+
+
+BEGIN
+	    REGION Description header
+	        // ============================================================================================================
+	        (/* (C)Copyright mPLUS (2025 of first release) - (2025 of last change)
+	// -------------------------------------------------------------------------
+	// Title: 
+	// Comment/Function: 
+	// Library/Family: -
+	// Author: Precision Motion Control Department/Lee Jin Sun
+	// Tested on System: S7-1500 with FW version V4.0, TO V9.0
+	// Engineering: TIA Portal V20
+	// Restrictions: -
+	// Requirements: S7-1500(T)
+	// --------------------------------------------------------------------------
+	// Change log table:
+	// Version          | Date            | Signature       | Expert in charge | Changes applied
+	// ------------------|----------------|-------------------|-----------------------|--------------------------
+	// 001.000.000 |2025.12.24 | 0x00000000 | Lee Jin Sun           | First release
+	 */)
+	 //============================================================================================================
+	END_REGION
+	
+	REGION Pre Sequence
+	    REGION First Scan
+	        IF "FirstScan" THEN
+	            #status := "STATUS_START_UP";
+	            #statNextState := "STATE_START_UP";
+	        END_IF;
+	    END_REGION
+	    
+	    REGION Triger
+	        #instRisingTrigger_PrepareSection(CLK := "DB_Trigger".Trigger_PrepareSection_06);
+	    END_REGION
+	    
+	        REGION cmd stop
+	            #instRisingTrigger_cmdStop(CLK := #cmdStop);
+	            
+	            IF #instRisingTrigger_cmdStop.Q THEN
+	                #status := "STATUS_STOPPING";
+	                #statNextState := #STATE_HALT;
+	                RETURN;
+	            END_IF;
+	        END_REGION
+	END_REGION
+	
+	REGION Main Sequence
+	    CASE #statCurrentState OF
+	                
+	            "STATE_START_UP":
+	                REGION STATE START UP
+	                    #status := "STATUS_UNKNOWN";
+	                    #statNextState := "STATE_UNKNOWN";
+	                END_REGION
+	                
+	            "STATE_UNKNOWN":
+	                REGION STATE UNKNOWN
+	                    // Entry Activity
+	                    IF #statStateChangeInProcess THEN
+	                        // Reset Output
+	                        #busy := FALSE;
+	                        #done := FALSE;
+	                        #error := FALSE;
+	                        #status := "STATUS_UNKNOWN";
+	                    END_IF;
+	                    
+	                    IF #cmdExecute THEN
+	                        // reset
+	                        #statMoveRelativeExecute := FALSE;
+	                        #statCamInExecute_SepaGripperX := FALSE;
+	                        #statCamInExecute_SepaGripperZ := FALSE;
+	                        #statCamInExecute_winding := FALSE;
+	                        #statHaltExecute_All := FALSE;
+	                        #statHaltExecute_SepaGripper := FALSE;
+	                        #statHaltExecute_vr := FALSE;
+	                        #statHaltExecute_Winding := FALSE;
+	                        #statHaltStatusWord := 16#0000;
+	                        
+	                        #busy := TRUE;
+	                        #status := "STATUS_CHECK";
+	                        #statNextState := #STATE_STATUS_CHECK;
+	                    END_IF;
+	                    
+	                    
+	                END_REGION
+	                
+	            #STATE_STATUS_CHECK:
+	                REGION STATE STATUS CHECK
+	                    // Entry Activity
+	                    IF #statStateChangeInProcess THEN
+	                        IF "DB_StackRecipe".Winding.WindingRevolution = 360 THEN
+	                            #statX_MoveDistanceCalc := (2 * "DB_StackRecipe".JR.Width + 2 * "DB_StackRecipe".JR.Height);
+	                        ELSIF "DB_StackRecipe".Winding.WindingRevolution = 540 THEN
+	                            #statX_MoveDistanceCalc := (3 * "DB_StackRecipe".JR.Width + 3 * "DB_StackRecipe".JR.Height);
+	                        ELSE
+	                            #statX_MoveDistanceCalc := -1.0;
+	                        END_IF;
+	                        
+	                        // Power Status Check
+	                        IF NOT #axis_Winding01R.StatusWord.%X0
+	                            OR NOT #axis_winding02R.StatusWord.%X0
+	                            OR NOT #axis_SepaGripperX.StatusWord.%X0
+	                            OR NOT #axis_SepaGripperZ.StatusWord.%X0
+	                            OR NOT "DB_Monitoring".VR06_PowerOn
+	                        THEN
+	                            #busy := FALSE;
+	                            #error := TRUE;
+	                            #status := "STATUS_POWER_OFF_ERROR";
+	                            
+	                            // Home status Check
+	                        ELSIF NOT #axis_Winding01R.StatusWord.%X5
+	                            OR NOT #axis_winding02R.StatusWord.%X5
+	                            OR NOT #axis_SepaGripperX.StatusWord.%X5
+	                            OR NOT #axis_SepaGripperZ.StatusWord.%X5
+	                        THEN
+	                            #busy := FALSE;
+	                            #error := TRUE;
+	                            #status :="STATUS_NOT_HOME_ERROR";
+	                            
+	                        // Winder Get Position Check    
+	                        ELSIF NOT "DB_Servo_Inpos"."Axis_56_Winding unit θ01"[2]
+	                            // 임시. Sepa Gripper Position Check X, Z 
+	                            OR NOT "DB_Servo_Inpos"."Axis_52_Pulling unit sepa gripper X"[3] // winding Start Pos
+	                            OR NOT "DB_Servo_Inpos"."Axis_53_Pulling unit sepa gripper Z"[4] // Winding Pos
+	                            // Recipe Value Error 
+	                            OR ("DB_StackRecipe".Auto.Dryrun
+	                            AND ABS("DB_StackRecipe".Servo["AXIS52_PULLINGUNIT_SEPAGRIPPER_X"].Position_04 - "DB_StackRecipe".Servo["AXIS52_PULLINGUNIT_SEPAGRIPPER_X"].Position_03) <= #statX_MoveDistanceCalc) // Winding End - Winding Start distance가 충분한지 확인.
+	                        THEN
+	                            #busy := FALSE;
+	                            #error := TRUE;
+	                            #status := "STATUS_AXIS_POSITION_ERROR";
+	                            
+	                            // Winder Gear In Check
+	                        ELSIF NOT "DB_Global_Servo".Gearin_WindingUnit_R THEN
+	                            #busy := FALSE;
+	                            #error := TRUE;
+	                            #status := "STATUS_GEARIN_ERROR";
+	                            
+	                            // Winder Mandrel Clamp Close
+	                        ELSIF NOT "DI_Unit05_Winder_Mandrel_Clamp".IO.Detect_Extend
+	                            OR NOT "DI_Unit05_Winder_J/R_Mandrel_Clamp".IO.Detect_Extend
+	                        THEN
+	                            #busy := FALSE;
+	                            #error := TRUE;
+	                            #status := "STATUS_CYLINDER_POSITION_ERROR";
+	                            
+	                        ELSE
+	                            // ok
+	                            #status := "STATUS_CHECK_DONE";
+	                        END_IF;
+	                    END_IF;
+	                    
+	                    // State Transition
+	                    IF #status = "STATUS_POWER_OFF_ERROR"
+	                        OR #status = "STATUS_NOT_HOME_ERROR"
+	                        OR #status =  "STATUS_AXIS_POSITION_ERROR"
+	                        OR #status = "STATUS_GEARIN_ERROR"
+	                        OR #status =  "STATUS_CYLINDER_POSITION_ERROR"
+	                    THEN
+	                        #statNextState := "STATE_UNKNOWN";
+	                        
+	                    ELSIF #status = "STATUS_CHECK_DONE" THEN
+	                        #statNextState := #STATE_VRAXIS_HOME;
+	                    END_IF;
+	                END_REGION
+	                
+	(/*            #STATE_VRAXIS_POWERON:
+	                REGION STATE VR AXIS POIWER ON
+	                    // Entry Activity
+	                    IF #statStateChangeInProcess THEN
+	                        #status := "STATUS_INITIALIZING";
+	                        IF "DB_Monitoring".VR06_PowerOn THEN
+	                            #statNextState := #STATE_VRAXIS_HOME;
+	                        ELSE
+	                            #statPowerEnable := TRUE;
+	                        END_IF;
+	                    END_IF;
+	                    
+	                    IF #instPower_vr.Status THEN
+	                        #statNextState := #STATE_VRAXIS_HOME;
+	                    ELSIF #instPower_vr.Error THEN
+	                        #busy := FALSE;
+	                        #error := TRUE;
+	                        #status := #STATUS_POWER_OFF_ERROR;
+	                        #statPowerEnable := FALSE;
+	                        #statNextState := "STATE_UNKNOWN";
+	                    END_IF;
+	                END_REGION */)
+	                
+	            #STATE_VRAXIS_HOME:
+	                REGION STATE VR AXIS HOME
+	                    // Entry Activity
+	                    IF #statStateChangeInProcess THEN
+	                        #statHomeExecute := TRUE;
+	                    END_IF;
+	                    
+	                    IF #instHome_vr.Done THEN
+	                        #statNextState := #STATE_CAMIN_FIRST;
+	                    ELSIF #instHome_vr.Error THEN
+	                        #busy := FALSE;
+	                        #error := TRUE;
+	                        #status := "STATUS_NOT_HOME_ERROR";
+	                        #statNextState := #STATE_HALT;
+	                    END_IF;
+	                    
+	                    // Exit Activity
+	                    IF #statCurrentState <> #statNextState THEN
+	                        #statHomeExecute := FALSE;
+	                    END_IF;
+	                END_REGION
+	                
+	(*            #STATE_GEARIN_WINDING:
+	                REGION STATE GEAR IN WINDING AXIS
+	                    // Entry Activity
+	                    IF #statStateChangeInProcess THEN
+	                        IF "DB_Global_Servo".Gearin_WindingUnit_R THEN
+	                            #cam := #CAM_FIRST;
+	                            #statNextState := #STATE_CAMIN_FIRST;
+	                        ELSE
+	                            #statGearInExecute := TRUE;
+	                        END_IF;
+	                    END_IF;
+	                    
+	                    IF #instGearIn_Winding.InGear THEN
+	                        #cam := #CAM_FIRST;
+	                        #statNextState := #STATE_CAMIN_FIRST;
+	                    ELSIF #instGearIn_Winding.Error THEN
+	                        #busy := FALSE;
+	                        #error := TRUE;
+	                        #status := #STATUS_GEARIN_ERROR;
+	                        #statNextState := #STATE_HALT;
+	                    END_IF;
+	                    
+	                    // Exit Activity
+	                    IF #statCurrentState <> #statNextState THEN
+	                        #statGearInExecute := FALSE;
+	                    END_IF;
+	                END_REGION *)
+	                
+	            #STATE_CAMIN_FIRST:
+	                REGION STATE CAM IN FIRST
+	                    //Entry Activity
+	                    IF #statStateChangeInProcess THEN
+	                        #cam := #CAM_FIRST;
+	                        #statCamInExecute_winding := TRUE;
+	                        #statCamInExecute_SepaGripperX := TRUE;
+	                        #statCamInExecute_SepaGripperZ := TRUE;
+	                    END_IF;
+	                    
+	                    IF #instCamIn_SepaGripperX.InSync
+	                        AND #instCamIn_SepaGripperZ.InSync
+	                        AND #instCamIn_Winding.InSync
+	                    THEN
+	                        // Save for comparison if the cam has been changed.
+	                        #statOldCam_X := #axis_SepaGripperX.StatusSynchronizedMotion.ActualCam;
+	                        #statOldCam_Z := #axis_SepaGripperZ.StatusSynchronizedMotion.ActualCam;
+	                        
+	                        #statNextState := #STATE_ROTATION_FIRST;
+	                    ELSIF #instCamIn_SepaGripperX.Error
+	                        OR #instCamIn_SepaGripperZ.Error
+	                        OR #instCamIn_Winding.Error
+	                    THEN
+	                        #busy := FALSE;
+	                        #error := TRUE;
+	                        #status := "STATUS_CAMIN_ERROR";
+	                        #statNextState := #STATE_HALT;
+	                    END_IF;
+	                    
+	                    //Exit Activity
+	                    IF #statCurrentState <> #statNextState THEN
+	                        // Reset 
+	                        #statCamInExecute_winding := FALSE;
+	                        #statCamInExecute_SepaGripperX := FALSE;
+	                        #statCamInExecute_SepaGripperZ := FALSE;
+	                    END_IF;
+	                END_REGION
+	                
+	                
+	            #STATE_ROTATION_FIRST:
+	                REGION STATE ROTATION FIRST
+	                    // Entry Activity
+	                    IF #statStateChangeInProcess THEN
+	                        #statMoveRelativeExecute := TRUE;
+	                        #statParameterMoveRelative.Distance := 360.0;
+	                        #statParameterMoveRelative.Velocity := #velocity;
+	                        #statParameterMoveRelative.Acc := -1;
+	                        #statParameterMoveRelative.Dcc := -1;
+	                        #statParameterMoveRelative.Jerk := -1;
+	                    END_IF;
+	                    
+	                    
+	                    IF "DB_StackRecipe".Winding.WindingRevolution = 360 THEN
+	                        IF #instMoveRelative.Done THEN
+	                            #statNextState := #STATE_CAMOUT;
+	                        END_IF;
+	                    ELSIF "DB_StackRecipe".Winding.WindingRevolution = 540 THEN
+	                        IF #instRisingTrigger_PrepareSection.Q THEN
+	                            #status := "STATUS_WINDING_FIRST_TURN_DONE";
+	                            #cam := #CAM_SECOND;
+	                            #statNextState := #STATE_CAMIN_SECOND;
+	                        END_IF;
+	                    ELSIF #instMoveRelative.Error THEN
+	                        #busy := FALSE;
+	                        #error := TRUE;
+	                        #status := "STATUS_MOVERELATIVE_ERROR";
+	                        #statNextState := #STATE_HALT;
+	                    END_IF;
+	                    
+	                    //Exit Activity
+	                    IF #statCurrentState <> #statNextState THEN
+	                        // Reset 
+	                        #statMoveRelativeExecute := FALSE;
+	                    END_IF;
+	                END_REGION
+	                
+	            #STATE_CAMIN_SECOND:
+	                REGION STATE CAM IN SECOND
+	                    // Entry Activity
+	                    IF #statStateChangeInProcess THEN
+	                        #statCamInExecute_SepaGripperX := TRUE;
+	                        #statCamInExecute_SepaGripperZ := TRUE;
+	                    END_IF;
+	                    
+	                    IF #axis_SepaGripperX.StatusSynchronizedMotion.ActualCam <> #statOldCam_X
+	                        AND #axis_SepaGripperZ.StatusSynchronizedMotion.ActualCam <> #statOldCam_Z
+	                    THEN
+	                        // Save Current Cam Data
+	                        #statOldCam_X := #axis_SepaGripperX.StatusSynchronizedMotion.ActualCam;
+	                        #statOldCam_Z := #axis_SepaGripperZ.StatusSynchronizedMotion.ActualCam;
+	                        #statNextState := #STATE_ROTATION_SECOND;
+	                        
+	                    ELSIF #instCamIn_SepaGripperX.Error
+	                        OR #instCamIn_SepaGripperZ.Error
+	                        OR #instCamIn_Winding.Error
+	                    THEN
+	                        #busy := FALSE;
+	                        #error := TRUE;
+	                        #status := "STATUS_CAMIN_ERROR";
+	                        #statNextState := #STATE_HALT;
+	                    END_IF;
+	                    
+	                    //Exit Activity
+	                    IF #statCurrentState <> #statNextState THEN
+	                        // Reset 
+	                        #statCamInExecute_winding := FALSE;
+	                        #statCamInExecute_SepaGripperX := FALSE;
+	                        #statCamInExecute_SepaGripperZ := FALSE;
+	                      END_IF;
+	                END_REGION
+	                
+	            #STATE_ROTATION_SECOND:
+	                REGION STATE ROTATION SECOND
+	                    // Entry Activity
+	                    IF #statStateChangeInProcess THEN
+	                        #statMoveRelativeExecute := TRUE;
+	                        #statParameterMoveRelative.Distance := 180.0;
+	                        #statParameterMoveRelative.Velocity := #velocity;
+	                        #statParameterMoveRelative.Acc := -1;
+	                        #statParameterMoveRelative.Dcc := -1;
+	                        #statParameterMoveRelative.Jerk := -1;
+	                    END_IF;
+	                    
+	                    IF #instMoveRelative.Done THEN
+	                        #status := "STATUS_WINDING_SECOND_TURN_DONE";
+	                        #statNextState := #STATE_CAMOUT;
+	                    ELSIF #instMoveRelative.Error THEN
+	                        #busy := FALSE;
+	                        #error := TRUE;
+	                        #status := "STATUS_MOVERELATIVE_ERROR";
+	                        #statNextState := #STATE_HALT;
+	                    END_IF;
+	                    
+	                    //Exit Activity
+	                    IF #statCurrentState <> #statNextState THEN
+	                        // Reset 
+	                        #statMoveRelativeExecute := FALSE;
+	                    END_IF;
+	                END_REGION
+	                
+	            #STATE_CAMOUT:
+	                REGION STATE CAMOUT
+	                    // Entry Activity
+	                    IF #statStateChangeInProcess THEN
+	                        #statHaltExecute_vr := TRUE;
+	                        #statHaltExecute_SepaGripper := TRUE;
+	                        #statHaltExecute_Winding := TRUE;
+	                    END_IF;
+	                    
+	                    IF NOT #instCamIn_SepaGripperX.InSync THEN
+	                        #statHaltStatusWord.%X0 := TRUE;
+	                    END_IF;
+	                    IF NOT #instCamIn_SepaGripperZ.InSync THEN
+	                        #statHaltStatusWord.%X1 := TRUE;
+	                    END_IF;
+	                    IF NOT #instCamIn_Winding.InSync THEN
+	                        #statHaltStatusWord.%X2 := TRUE;
+	                    END_IF;
+	                    IF #instHalt_vr.Done THEN
+	                        #statHaltStatusWord.%X3 := TRUE;
+	                    END_IF;
+	                    
+	                    IF #instHalt_vr.Error
+	                        OR #instCamIn_SepaGripperX.Error
+	                        OR #instCamIn_SepaGripperZ.Error
+	                        OR #instCamIn_Winding.Error
+	                    THEN
+	                        #statHaltStatusWord.%X15 := TRUE;
+	                    END_IF;
+	                    
+	                    IF #statHaltStatusWord = 16#000F THEN
+	                        #busy := FALSE;
+	                        #done := TRUE;
+	                        #error := FALSE;
+	                        #status := "STATUS_WINDING_MOTION_COMPLETED";
+	                        // Initial Status
+	                        #statHaltStatusWord := 16#0000;
+	                        #statNextState := "STATE_UNKNOWN";
+	                        
+	                    ELSIF #statHaltStatusWord.%X15 = TRUE THEN
+	                        #busy := FALSE;
+	                        #error := TRUE;
+	                        #status := "STATUS_CAMOUT_ERROR";
+	                        // Initial Status
+	                        #statHaltStatusWord := 16#0000;
+	                        #statNextState := #STATE_HALT;
+	                    END_IF;
+	                    
+	                    // Exit Activity
+	                    IF #statCurrentState <> #statNextState THEN
+	                        #statHaltExecute_vr := FALSE;
+	                        #statHaltExecute_SepaGripper := FALSE;
+	                        #statHaltExecute_Winding := FALSE;
+	                    END_IF;
+	                END_REGION
+	                
+	            #STATE_HALT:
+	                REGION STATE_HALT
+	                    //Entry Activity
+	                    IF #statStateChangeInProcess THEN
+	                        #statHaltExecute_All := TRUE;
+	                    END_IF;
+	                    
+	                    IF NOT #instCamIn_SepaGripperX.InSync
+	                        AND NOT #instCamIn_SepaGripperZ.InSync
+	                        AND NOT #instCamIn_Winding.InSync
+	                        AND NOT #instGearIn_Winding.InGear
+	                    THEN
+	                        #statHaltStatusWord.%X0 := TRUE;
+	                    END_IF;
+	                    IF #instHalt_vr.Done THEN
+	                        #statHaltStatusWord.%X1 := TRUE;
+	                    END_IF;
+	                    IF #instHalt_Winding01R.Done THEN
+	                        #statHaltStatusWord.%X2 := TRUE;
+	                    END_IF;
+	                    // IF #instHalt_Winding02R.Done THEN
+	                    //     #statHaltStatusWord.%X3 := TRUE;
+	                    // END_IF;
+	                    IF #instHalt_SepaGripperX.Done THEN
+	                        #statHaltStatusWord.%X4 := TRUE;
+	                    END_IF;
+	                    IF #instHalt_SepaGripperZ.Done THEN
+	                        #statHaltStatusWord.%X5 := TRUE;
+	                    END_IF;
+	                    
+	                    IF #instHalt_vr.Error
+	                        OR #instHalt_Winding01R.Error
+	                        OR #instHalt_SepaGripperX.Error
+	                        OR #instHalt_SepaGripperZ.Error
+	                    THEN
+	                        #statHaltStatusWord.%X15 := TRUE;
+	                    END_IF;
+	                    
+	                    IF #statHaltStatusWord = 16#0037 THEN
+	                        #busy := FALSE;
+	                        #done := TRUE;
+	                        #error := FALSE;
+	                        #status := "STATUS_STOPPED";
+	                        // Status Initial
+	                        #statHaltStatusWord := 16#0000;
+	                        #statNextState := "STATE_UNKNOWN";
+	                        
+	                    ELSIF #statHaltStatusWord.%X15 = TRUE THEN
+	                        #busy := FALSE;
+	                        #done := FALSE;
+	                        #error := TRUE;
+	                        #status := "STATUS_HALT_ERROR";
+	                        // Status Initial
+	                        #statHaltStatusWord := 16#0000;
+	                        #statNextState := "STATE_UNKNOWN";
+	                    END_IF;
+	                    
+	                    // Exit Activity
+	                    IF #statCurrentState <> #statNextState THEN
+	                        #statHaltExecute_All := FALSE;
+	                    END_IF;
+	                END_REGION
+	        END_CASE;
+	    END_REGION
+	
+	    REGION Post Sequence
+	        REGION State Trasition
+	        "FC_LMC_StateTransition"(changeInProcess => #statStateChangeInProcess,
+	                                 nextState := #statNextState,
+	                                 currentState := #statCurrentState,
+	                                 previousState := #statPreviousState);
+	    END_REGION
+	    
+	    REGION Motion Control
+	    
+	        #instHome_vr(Axis := #axis_virtual,
+	                     Execute := #statHomeExecute,
+	                     Mode := 7);
+	        
+	        IF "DB_StackRecipe".Winding.WindingDirection THEN
+	            #instCamIn_Winding(Master := #axis_virtual,
+	                               Slave := #axis_Winding01R,
+	                               Cam := "Cam_Run",
+	                               Execute := #statCamInExecute_winding,
+	                               SlaveOffset := "Axis56_WindingUnit01R_TB17".Position,
+	                               SlaveScaling := 1.0,
+	                               MasterStartDistance := 0.01,
+	                               ApplicationMode := 2,
+	                               SyncDirection := 3);
+	        ELSE
+	            #instCamIn_Winding(Master := #axis_virtual,
+	                               Slave := #axis_Winding01R,
+	                               Cam := "Cam_Run",
+	                               Execute := #statCamInExecute_winding,
+	                               SlaveOffset := "Axis56_WindingUnit01R_TB17".Position,
+	                               SlaveScaling := -1.0,
+	                               MasterStartDistance := 0.01,
+	                               ApplicationMode := 2,
+	                               SyncDirection := 3);
+	        END_IF;
+	        
+	        
+	        IF #cam = #CAM_FIRST THEN
+	            #instCamIn_SepaGripperX(Master := #axis_virtual,
+	                                    Slave := #axis_SepaGripperX,
+	                                    Cam := "Cam_WindingX1",
+	                                    Execute := #statCamInExecute_SepaGripperX,
+	                                    SlaveOffset := "Axis52_SepaGripperX_TB11".Position,  // #windingXOffset,
+	                                    SyncProfileReference:=2,
+	                                    MasterStartDistance := 0.0,
+	                                    ApplicationMode := 2,
+	                                    SyncDirection := 3);
+	            
+	            #instCamIn_SepaGripperZ(Master := #axis_virtual,
+	                                    Slave := #axis_SepaGripperZ,
+	                                    Cam := "Cam_WindingZ1",
+	                                    Execute := #statCamInExecute_SepaGripperZ,
+	                                    SlaveOffset := "Axis53_SepaGripperZ_TB14".Position,  //#windingZOffset,
+	                                    SyncProfileReference := 2,
+	                                    MasterStartDistance := 0.0,
+	                                    ApplicationMode := 2,
+	                                    SyncDirection := 3);
+	            
+	        ELSIF #cam = #CAM_SECOND THEN
+	            // CCW
+	            IF  "DB_StackRecipe".Winding.WindingDirection THEN
+	                #statSecondX_SlaveOffset:= ("DB_StackRecipe".Servo["AXIS52_PULLINGUNIT_SEPAGRIPPER_X"].Position_04 - "DB_StackRecipe".JR.Width - "DB_StackRecipe".JR.Height); // Position04 : Winding End Position
+	                #statSecondZ_SlaveOffset := "DB_StackRecipe".Servo["AXIS53_PULLINGUNIT_SEPAGRIPPER_Z"].Position_01;
+	            ELSE
+	                //CW
+	                #statSecondX_SlaveOffset := ("DB_StackRecipe".Servo["AXIS52_PULLINGUNIT_SEPAGRIPPER_X"].Position_04 - "DB_StackRecipe".JR.Width - "DB_StackRecipe".JR.Height); // Position04 : Winding End Position
+	                #statSecondZ_SlaveOffset := ("DB_StackRecipe".Servo["AXIS53_PULLINGUNIT_SEPAGRIPPER_Z"].Position_01 - "DB_StackRecipe".JR.Height);
+	            END_IF;
+	            
+	            #instCamIn_SepaGripperX(Master := #axis_virtual,
+	                                    Slave := #axis_SepaGripperX,
+	                                    Cam := "Cam_WindingX2",
+	                                    Execute := #statCamInExecute_SepaGripperX,
+	                                    SlaveOffset := #statSecondX_SlaveOffset,
+	                                    SyncProfileReference:=5,
+	                                    MasterStartDistance := 0.01,
+	                                    ApplicationMode := 2,
+	                                    SyncDirection := 3);
+	            
+	            #instCamIn_SepaGripperZ(Master := #axis_virtual,
+	                                    Slave := #axis_SepaGripperZ,
+	                                    Cam := "Cam_WindingZ2",
+	                                    Execute := #statCamInExecute_SepaGripperZ,
+	                                    SlaveOffset :=#statSecondZ_SlaveOffset,
+	                                    SyncProfileReference := 5,
+	                                    MasterStartDistance := 0.01,
+	                                    ApplicationMode := 2,
+	                                    SyncDirection := 3);
+	        END_IF;
+	        
+	        #instMoveRelative(Axis := #axis_virtual,
+	                          Execute := #statMoveRelativeExecute,
+	                          Distance := #statParameterMoveRelative.Distance,
+	                          Velocity := #statParameterMoveRelative.Velocity,
+	                          Acceleration := #statParameterMoveRelative.Acc,
+	                          Deceleration := #statParameterMoveRelative.Dcc,
+	                          Jerk := #statParameterMoveRelative.Jerk);
+	        
+	        #instHalt_vr(Axis:=#axis_virtual,
+	                     Execute:=#statHaltExecute_vr OR #statHaltExecute_All);
+	        
+	        #instHalt_Winding01R(Axis := #axis_Winding01R,
+	                             Execute := #statHaltExecute_Winding OR #statHaltExecute_All);
+	        
+	        #instHalt_SepaGripperX(Axis := #axis_SepaGripperX,
+	                               Execute := #statHaltExecute_SepaGripper OR #statHaltExecute_All);
+	        
+	        #instHalt_SepaGripperZ(Axis := #axis_SepaGripperZ,
+	                               Execute := #statHaltExecute_SepaGripper OR #statHaltExecute_All);
+	        
+	    END_REGION
+	    
+	END_REGION
+END_FUNCTION_BLOCK
+
