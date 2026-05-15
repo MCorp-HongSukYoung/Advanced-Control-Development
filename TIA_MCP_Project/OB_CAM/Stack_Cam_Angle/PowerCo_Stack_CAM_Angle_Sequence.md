@@ -159,24 +159,47 @@ Reverse PP(반전 픽앤플레이스)는 **두 레이어**에서 동작합니다
 
 ### Layer 1: CAM 추종 (VR03 연동)
 
-RUN Phase 동안 Reverse R/Z는 VR03을 마스터로 캠 프로파일을 추종합니다.
+RUN Phase 동안 Reverse R/Z는 VR03을 마스터로 캠 프로파일을 추종합니다.  
+CAMIN은 **두 개의 신호**로 구분됩니다:
 
-| Phase | 캠 이름 | Slave 축 | 방향 | 역할 |
-|-------|---------|----------|------|------|
-| LC_RUN | `Cam_STACK_LC_ReverseR_PUT` | Axis12 (Cathode Reverse R, TB117) | PUT | Cathode 전극을 AlignTable 방향으로 이송 |
-| LC_RUN | `Cam_STACK_LC_ReverseZ_PUT` | Axis11 (Cathode Reverse Z, TB116) | PUT | 동상 |
-| LC_RUN | `Cam_STACK_RA_ReverseR_GET` | Axis27 (Anode Reverse R, TB141) | GET | 다음 Anode 전극 수령 대기 |
-| LC_RUN | `Cam_STACK_RA_ReverseZ_GET` | Axis26 (Anode Reverse Z, TB140) | GET | 동상 |
-| RA_RUN | `Cam_STACK_RA_ReverseR_PUT` | Axis27 (Anode Reverse R, TB141) | PUT | Anode 전극을 AlignTable 방향으로 이송 |
-| RA_RUN | `Cam_STACK_RA_ReverseZ_PUT` | Axis26 (Anode Reverse Z, TB140) | PUT | 동상 |
-| RA_RUN | `Cam_STACK_LC_ReverseR_GET` | Axis12 (Cathode Reverse R, TB117) | GET | 다음 Cathode 전극 수령 대기 |
-| RA_RUN | `Cam_STACK_LC_ReverseZ_GET` | Axis11 (Cathode Reverse Z, TB116) | GET | 동상 |
+| CAMIN 신호 | 사용 블록 | 동작 |
+|------------|-----------|------|
+| `STACK_LC_RUN_CAMIN` | `FB_Camin_STACK_LC_RUN` | 주 스태킹 LC RUN Phase에서 Reverse 동기화 |
+| `Single_LC_RUN_CAMIN` | `FB_Camin_Single_LC_RUN` | LC_Single 버퍼 채우기 Phase에서 Reverse 동기화 |
+
+**CAMIN 신호별 Slave 축 매핑:**
+
+| CAMIN 신호 | 캠 이름 | Slave 축 | 방향 | 역할 |
+|------------|---------|----------|------|------|
+| `STACK_LC_RUN_CAMIN` | `Cam_STACK_LC_ReverseR_PUT` | **Axis12** (Cathode Reverse R, TB117) | PUT | Cathode 전극 AlignTable 이송 |
+| `STACK_LC_RUN_CAMIN` | `Cam_STACK_LC_ReverseZ_PUT` | **Axis11** (Cathode Reverse Z, TB116) | PUT | 동상 |
+| `STACK_LC_RUN_CAMIN` | `Cam_STACK_RA_ReverseR_GET` | Axis27 (Anode Reverse R, TB141) | GET | 다음 Anode 전극 수령 대기 |
+| `STACK_LC_RUN_CAMIN` | `Cam_STACK_RA_ReverseZ_GET` | Axis26 (Anode Reverse Z, TB140) | GET | 동상 |
+| `Single_LC_RUN_CAMIN` | `Cam_STACK_LC_ReverseR_PUT` | **Axis27** (Anode Reverse R, TB141) | PUT | ⚠️ STACK_LC_RUN과 다른 축 |
+| `Single_LC_RUN_CAMIN` | `Cam_STACK_LC_ReverseZ_PUT` | **Axis26** (Anode Reverse Z, TB140) | PUT | ⚠️ STACK_LC_RUN과 다른 축 |
+| `STACK_RA_RUN_CAMIN` | `Cam_STACK_RA_ReverseR_PUT` | Axis27 (Anode Reverse R, TB141) | PUT | Anode 전극 AlignTable 이송 |
+| `STACK_RA_RUN_CAMIN` | `Cam_STACK_RA_ReverseZ_PUT` | Axis26 (Anode Reverse Z, TB140) | PUT | 동상 |
+| `STACK_RA_RUN_CAMIN` | `Cam_STACK_LC_ReverseR_GET` | Axis12 (Cathode Reverse R, TB117) | GET | 다음 Cathode 전극 수령 대기 |
+| `STACK_RA_RUN_CAMIN` | `Cam_STACK_LC_ReverseZ_GET` | Axis11 (Cathode Reverse Z, TB116) | GET | 동상 |
+
+> **⚠️ Single_LC_RUN 주의**: 같은 캠 프로파일(`Cam_STACK_LC_ReverseX_PUT`)이 `Single_LC_RUN_CAMIN`에서는 **Anode Reverse 축(Axis26/27)** 에 적용됩니다. STACK_LC_RUN(Cathode Axis11/12)과 대상 축이 다릅니다.
 
 > **InSync 조건**: Reverse R/Z의 `CamIn.InSync`도 `STACK_LC/RA_RUN_InSync` 조건에 AND 포함됩니다.
 > 즉, Reverse 동기화가 실패하면 Step 220→230 전환이 차단됩니다.
 
-> **CAM 이름 주의**: `CAMIN_Cam_STACK_LC_ReverseR_PUT` 호출 시 실제 캠 오브젝트 인자로
-> `Cam_STACK_LC_ReverseX_PUT`이 전달됩니다 — 코드 내 R축 캠이 `X`로 네이밍된 불일치가 존재합니다.
+> **CAM 이름 불일치**: `CAMIN_Cam_STACK_LC_ReverseR_PUT` 호출 시 실제 캠 오브젝트 인자로
+> `Cam_STACK_LC_ReverseX_PUT`이 전달됩니다 — R축 캠이 `X`로 네이밍된 불일치가 코드에 존재합니다.
+
+#### CAM 각도 커브 데이터 접근 방법
+
+`Cam_STACK_LC_ReverseX_PUT` 등 캠 오브젝트의 **VR03 각도별 슬레이브 위치 테이블**은 TIA Portal Technology Object로 저장됩니다. 현재 export 툴은 프로그램 블록만 추출하며 Technology Object는 대상이 아닙니다.
+
+| 접근 방법 | 가능 여부 |
+|-----------|-----------|
+| `.md` / `.xml` export 파일 | ❌ 포함되지 않음 |
+| TIA Portal UI → Technology Objects → Cam | ✅ 직접 확인 가능 |
+| 런타임 HMI 읽기 (`DB_HMICamValue`, `FB_HMIMonitoring_ReadCamProfile`) | ✅ PLC 실행 중 가능 |
+| TIA Portal Openness Technology Object API | 🔧 현재 미구현 |
 
 ---
 
@@ -416,7 +439,7 @@ Step 741: `IEC_Timer_AUTO_ANODE_VISION.Q` 조건 동일하게 적용
 
 ## 알려진 한계
 
-- **캠 커브 형상 미확인**: 각 VR 각도에서의 정확한 슬레이브 위치 값(캠 커브)은 TIA Portal 내부 캠 오브젝트(`Cam_STACK_LC_AlignTableX`, `Cam_STACK_LC_ReverseR_PUT` 등)에 숫자 테이블로 저장되어 있어 `.md` export에서 추출 불가. Reverse R/Z가 VR03 몇 도 구간에서 피크 이송을 하는지는 TIA Portal에서 해당 캠 오브젝트를 직접 열어야 확인 가능.
+- **CAM 각도 커브 미확인**: `Cam_STACK_LC_ReverseX_PUT` 등 캠 오브젝트는 TIA Portal Technology Object로 저장되며, 현재 export 툴(`/analyze-plc`, block export)은 프로그램 블록만 대상으로 하여 Technology Object 접근 불가. VR03 몇 도 구간에서 Reverse가 피크 이송을 하는지 확인하려면 TIA Portal UI에서 직접 열거나, 런타임 중 `DB_HMICamValue`(`camSelectionIndex` 설정 후 `readCamTrigger` SET)를 통해 HMI에서 읽어야 함.
 - **`STACK_LC_RUN_CAMIN` SET 위치**: Sub1_200은 RESET만 수행. SET 위치(Sub_400/500 또는 별도 OB)는 확인되지 않음.
 - **Reverse CAM 이름 불일치**: 코드상 `CAMIN_Cam_STACK_LC_ReverseR_PUT`에 전달되는 캠 오브젝트가 `Cam_STACK_LC_ReverseX_PUT`으로 되어 있음 (R축인데 X 네이밍). 실제 물리 축 방향은 R이 맞으며 코드 의도는 정상이나 명칭 혼동 주의.
 - **Sub1_600 Step 627 / 645 이후 일부 Step**: Grep 결과에서 생략(Omitted)된 라인이 있어 세부 조건 일부 미확인.
