@@ -1,7 +1,7 @@
 # PowerCo_Stack — CAM 각도 단위 Unit별 동작 Sequence
 
 > 생성: 2026-05-14 by /onboard-plc 분석  
-> 보완: 2026-05-15 — Reverse R/Z CAM·Sequential 동작 추가 (FB_Camin_STACK_LC/RA_RUN, Sub1_600/700)
+> 보완: 2026-05-15 — Reverse R/Z CAM·Sequential 동작 추가 (FB_Camin_STACK_LC/RA_RUN, Sub1_600/700); CAM 각도 범위 추가 (TIA Portal 직접 확인: GET=20°~180°, PUT=180°~340°)
 > 소스: exports/PowerCo_Stack 디지스트 + Sub FB 코드 분석
 > 관련 문서: [PowerCo_Stack_CAM_Sequence.md](PowerCo_Stack_CAM_Sequence.md)
 
@@ -32,7 +32,9 @@ VR01/VR02(Dsheet)는 4개 Phase 내내 상시 회전합니다.
 |-----------|------|------|
 | 0° | VR03 홈 확인 (`ActualPosition == 0.0` AND `StatusWord` OK), STACK_LC_RUN_CAMIN 진입 대기 | Sub1_200, Step 210 |
 | 0° 직후 | `RESET STACK_LC_RUN_CAMIN` (이전 CAM 해제), VR03 RUN 시작.<br>**Reverse R/Z도 이 시점에 CAMIN 등록** (`Cam_STACK_LC_ReverseR_PUT`, `Cam_STACK_LC_ReverseZ_PUT`) | Sub1_200, Step 220→230 |
-| 0°~360° | **Reverse R(Axis12) / Z(Axis11)가 VR03에 동기** — PUT 캠 커브 추종으로 전극을 AlignTable 방향으로 이송 | FB_Camin_STACK_LC_RUN |
+| 20°~180° | **Anode Reverse R(Axis27) / Z(Axis26) GET** — 다음 Anode 전극 수령 구간 | FB_Camin_STACK_LC_RUN |
+| 180°~340° | **Cathode Reverse R(Axis12) / Z(Axis11) PUT** — 전극을 AlignTable 방향으로 이송 | FB_Camin_STACK_LC_RUN |
+| 0°~20°, 340°~360° | Reverse Dwell (정지, 위치 유지) | — |
 | ~80° | **RA Vision 카메라 트리거** — RA 측 전극 위치 사전 확인 | Sub1_200, Step 230 |
 | 120°~180° | **Align Vision 윈도우** — 정렬 카메라 연속 활성 | Sub1_200, Step 230 |
 | ~170° | **LC Vision 카메라 트리거** — Cathode 전극 정밀 위치 확인 | Sub1_200, Step 230 |
@@ -86,7 +88,9 @@ LC_RUN과 구조는 동일하나 Vision 트리거 순서가 반전됩니다.
 |-----------|------|------|
 | 0° | VR03 홈, STACK_RA_RUN_CAMIN 진입 | |
 | 0° 직후 | `RESET STACK_RA_RUN_CAMIN`, VR03 RUN 시작.<br>**Reverse R/Z도 CAMIN 등록** (`Cam_STACK_RA_ReverseR_PUT`, `Cam_STACK_RA_ReverseZ_PUT`) | Sub1_300, Step 320 |
-| 0°~360° | **Anode Reverse R(Axis27) / Z(Axis26)가 VR03에 동기** — PUT 캠 커브 추종 | FB_Camin_STACK_RA_RUN |
+| 20°~180° | **Cathode Reverse R(Axis12) / Z(Axis11) GET** — 다음 Cathode 전극 수령 구간 | FB_Camin_STACK_RA_RUN |
+| 180°~340° | **Anode Reverse R(Axis27) / Z(Axis26) PUT** — 전극을 AlignTable 방향으로 이송 | FB_Camin_STACK_RA_RUN |
+| 0°~20°, 340°~360° | Reverse Dwell (정지, 위치 유지) | — |
 | ~80° | **LC Vision 카메라 트리거** | LC_RUN의 80°는 RA였음 — 반전 |
 | 120°~180° | **Align Vision 윈도우** | |
 | ~170° | **RA Vision 카메라 트리거** | |
@@ -169,18 +173,28 @@ CAMIN은 **두 개의 신호**로 구분됩니다:
 
 **CAMIN 신호별 Slave 축 매핑:**
 
-| CAMIN 신호 | 캠 이름 | Slave 축 | 방향 | 역할 |
-|------------|---------|----------|------|------|
-| `STACK_LC_RUN_CAMIN` | `Cam_STACK_LC_ReverseR_PUT` | **Axis12** (Cathode Reverse R, TB117) | PUT | Cathode 전극 AlignTable 이송 |
-| `STACK_LC_RUN_CAMIN` | `Cam_STACK_LC_ReverseZ_PUT` | **Axis11** (Cathode Reverse Z, TB116) | PUT | 동상 |
-| `STACK_LC_RUN_CAMIN` | `Cam_STACK_RA_ReverseR_GET` | Axis27 (Anode Reverse R, TB141) | GET | 다음 Anode 전극 수령 대기 |
-| `STACK_LC_RUN_CAMIN` | `Cam_STACK_RA_ReverseZ_GET` | Axis26 (Anode Reverse Z, TB140) | GET | 동상 |
-| `Single_LC_RUN_CAMIN` | `Cam_STACK_LC_ReverseR_PUT` | **Axis27** (Anode Reverse R, TB141) | PUT | ⚠️ STACK_LC_RUN과 다른 축 |
-| `Single_LC_RUN_CAMIN` | `Cam_STACK_LC_ReverseZ_PUT` | **Axis26** (Anode Reverse Z, TB140) | PUT | ⚠️ STACK_LC_RUN과 다른 축 |
-| `STACK_RA_RUN_CAMIN` | `Cam_STACK_RA_ReverseR_PUT` | Axis27 (Anode Reverse R, TB141) | PUT | Anode 전극 AlignTable 이송 |
-| `STACK_RA_RUN_CAMIN` | `Cam_STACK_RA_ReverseZ_PUT` | Axis26 (Anode Reverse Z, TB140) | PUT | 동상 |
-| `STACK_RA_RUN_CAMIN` | `Cam_STACK_LC_ReverseR_GET` | Axis12 (Cathode Reverse R, TB117) | GET | 다음 Cathode 전극 수령 대기 |
-| `STACK_RA_RUN_CAMIN` | `Cam_STACK_LC_ReverseZ_GET` | Axis11 (Cathode Reverse Z, TB116) | GET | 동상 |
+| CAMIN 신호 | 캠 이름 | Slave 축 | 방향 | VR03 범위 | 역할 |
+|------------|---------|----------|------|-----------|------|
+| `STACK_LC_RUN_CAMIN` | `Cam_STACK_LC_ReverseR_PUT` | **Axis12** (Cathode Reverse R, TB117) | PUT | **180°~340°** | Cathode 전극 AlignTable 이송 |
+| `STACK_LC_RUN_CAMIN` | `Cam_STACK_LC_ReverseZ_PUT` | **Axis11** (Cathode Reverse Z, TB116) | PUT | **180°~340°** | 동상 |
+| `STACK_LC_RUN_CAMIN` | `Cam_STACK_RA_ReverseR_GET` | Axis27 (Anode Reverse R, TB141) | GET | **20°~180°** | 다음 Anode 전극 수령 대기 |
+| `STACK_LC_RUN_CAMIN` | `Cam_STACK_RA_ReverseZ_GET` | Axis26 (Anode Reverse Z, TB140) | GET | **20°~180°** | 동상 |
+| `Single_LC_RUN_CAMIN` | `Cam_STACK_LC_ReverseR_PUT` | **Axis27** (Anode Reverse R, TB141) | PUT | **180°~340°** | ⚠️ STACK_LC_RUN과 다른 축 |
+| `Single_LC_RUN_CAMIN` | `Cam_STACK_LC_ReverseZ_PUT` | **Axis26** (Anode Reverse Z, TB140) | PUT | **180°~340°** | ⚠️ STACK_LC_RUN과 다른 축 |
+| `STACK_RA_RUN_CAMIN` | `Cam_STACK_RA_ReverseR_PUT` | Axis27 (Anode Reverse R, TB141) | PUT | **180°~340°** | Anode 전극 AlignTable 이송 |
+| `STACK_RA_RUN_CAMIN` | `Cam_STACK_RA_ReverseZ_PUT` | Axis26 (Anode Reverse Z, TB140) | PUT | **180°~340°** | 동상 |
+| `STACK_RA_RUN_CAMIN` | `Cam_STACK_LC_ReverseR_GET` | Axis12 (Cathode Reverse R, TB117) | GET | **20°~180°** | 다음 Cathode 전극 수령 대기 |
+| `STACK_RA_RUN_CAMIN` | `Cam_STACK_LC_ReverseZ_GET` | Axis11 (Cathode Reverse Z, TB116) | GET | **20°~180°** | 동상 |
+
+#### Reverse CAM 각도 범위 (TIA Portal 직접 확인, 2026-05-15)
+
+| 구간 | VR03 범위 | 의미 |
+|------|-----------|------|
+| GET (전극 수령) | **20°~180°** | Reverse 헤드가 PP Head01로부터 전극을 픽업하는 구간 |
+| PUT (전극 전달) | **180°~340°** | Reverse 헤드가 AlignTable에 전극을 이송하는 구간 |
+| Dwell (정지) | 0°~20°, 340°~360° | 위치 유지, 다음 동작 준비 |
+
+- R축(회전)과 Z축(승강)은 **동일한 VR03 각도 범위**에서 동작합니다.
 
 > **⚠️ Single_LC_RUN 주의**: 같은 캠 프로파일(`Cam_STACK_LC_ReverseX_PUT`)이 `Single_LC_RUN_CAMIN`에서는 **Anode Reverse 축(Axis26/27)** 에 적용됩니다. STACK_LC_RUN(Cathode Axis11/12)과 대상 축이 다릅니다.
 
