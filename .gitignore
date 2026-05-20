@@ -22,3 +22,6 @@ build/
 # 임시 파일
 *.tmp
 *.log
+
+# Office 임시 잠금 파일
+~$*
