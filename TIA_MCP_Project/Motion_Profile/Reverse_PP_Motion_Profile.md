@@ -1,9 +1,10 @@
 # Stack Table Reverse P&P — Motion Profile
 
 > 작성: 2026-05-19  
+> 수정: 2026-05-21 — §5-1 PUT R(X)축 타임라인 교정(X_PUT 커브와 불일치 수정), §6 RA_RUN 설명·미확인 항목(§9) 재검증, 관련 링크 경로 수정  
 > 소스: `FB_Camin_STACK_LC_RUN`, `FB_Camin_STACK_RA_RUN`, `DB_GdbCam`, `DB_Global_Cam_Control`  
 > CAM 데이터: TIA Portal Openness export (2026-05-19) — `exports/.../cam_exports/Cam_STACK_*Reverse*.xml`  
-> 관련: [`VR축_0to360_전체동작.md`](VR축_0to360_전체동작.md), [`SwingRoller_Motion_Profile.md`](SwingRoller_Motion_Profile.md)
+> 관련: [`VR축_0to360_전체동작.md`](../OB_CAM/Stack_Cam_Angle/VR축_0to360_전체동작.md), [`SwingRoller_Motion_Profile.md`](SwingRoller_Motion_Profile.md)
 
 ---
 
@@ -159,19 +160,27 @@ R 위치
 
 ### 5-1. LC_RUN 중 Cathode P&P (PUT) 타임라인
 
+> Z = `Cam_STACK_LC_ReverseZ_PUT` (§4-2), R = `Cam_STACK_LC_ReverseX_PUT` (§4-4)
+
 | VR03 구간 | Z축 동작 | R축 동작 | 물리 상태 |
 |---|---|---|---|
-| 0° → 180° | 0.0 (carry 위치) | 0.0 → 1.0 (이동 중) | 전극 들고 플레이스 위치로 이동 |
-| 180° → 252° | 0.0 (carry) | 1.0 (플레이스 위치 도달) | 플레이스 위치에서 하강 대기 |
-| 252° → 274° | 0.0 → 1.0 (하강) | 1.0 (유지) | **전극 내려놓기 (PUT)** |
-| 274° → 360° | 1.0 (플레이스 위치) | 1.0 (유지) | CAMOUT 대기 |
+| 0° → 180° | 0.0 (carry, 들린 상태) | 0.0 (초기 위치 대기) | 전극 들고 carry 위치에서 대기 |
+| 180° → 252° | 0.0 (carry) | 0.0 → (플레이스 방향 이동 중) | R 플레이스 위치로 이동 개시 |
+| 252° → 274° | 0.0 → 1.0 (하강) | (이동 중) | **전극 하강(PUT) 개시 — R 이동과 겹침** |
+| 274° → 340° | 1.0 (하강 완료) | → 1.0 (플레이스 위치 도달) | Z 내려둔 채 R 이동 마무리 |
+| 340° → 360° | 1.0 (유지) | 1.0 (유지) | 플레이스 완료, CAMOUT 대기 |
+
+> ⚠ **교정 (2026-05-21)**: 기존 표는 R축을 GET 커브처럼 "0°→180° 이동 후 도달"로 적었으나, Cathode-R은 LC_RUN에서 `Cam_STACK_LC_ReverseX_PUT`(0°–180° 정지, 180°–340° 이동)을 사용한다.  
+> 따라서 Z 하강(252°–274°)이 **R 이동 완료(340°) 이전**에 시작된다 — PUT은 "R 이동 후 하강"이 아니라 R 이동과 Z 하강이 부분적으로 동시에 일어나는 복합 동작. 정확한 기구 동작(대각 삽입 / 하강 후 수평 정렬 등)은 기구 도면 확인 필요.
 
 ### 5-2. LC_RUN 중 Anode P&P (GET) 타임라인
 
+> Z = `Cam_STACK_RA_ReverseZ_GET` (§4-1), R = `Cam_STACK_RA_ReverseX_GET` (§4-3)
+
 | VR03 구간 | Z축 동작 | R축 동작 | 물리 상태 |
 |---|---|---|---|
-| 0° → 22° | 0.0 → 1.0 (빠른 하강) | 0.0 (대기) | 픽업 위치로 하강 |
-| 20° → 180° | 1.0 (픽업 위치) | 0.0 → 1.0 (이동) | 전극 집어 들고 이동 |
+| 0° → 22° | 0.0 → 1.0 (빠른 하강) | 0.0 (대기, R은 20°부터 이동 개시) | 픽업 위치로 하강 |
+| 22° → 180° | 1.0 (픽업 위치) | 0.0 → 1.0 (이동) | 전극 집어 들고 이동 |
 | 180° → 360° | 1.0 (carry) | 1.0 (유지) | 전극 들고 이동/유지 |
 
 ### 5-3. 전체 사이클 흐름
@@ -215,7 +224,8 @@ RA_STACK    (CAMOUT 완료, 정지)         (CAMOUT 완료, 정지)
 | `CAMOUT_Cam_STACK_RA_ReverseR_GET` | Axis27 (Anode R) | `STACK_LC_RUN_CAMOUT` |
 | `CAMOUT_Cam_STACK_RA_ReverseZ_GET` | Axis26 (Anode Z) | `STACK_LC_RUN_CAMOUT` |
 
-> `FB_Camin_STACK_RA_RUN`에는 대칭적으로 RA PUT + LC GET CAMIN/CAMOUT이 존재 (RA_RUN_CAMOUT 트리거).
+> `FB_Camin_STACK_RA_RUN`은 대칭 위상을 담당 — CAMIN이 **Cathode(LC) GET + Anode(RA) PUT**을 동기화(`STACK_RA_RUN_CAMIN` 트리거). 즉 LC_RUN과 GET/PUT 역할이 정확히 뒤바뀜.  
+> (참고: RA_RUN FB의 CAMOUT 인스턴스명·DB 경로는 LC_RUN과 동일하게 `LC_…_PUT` / `RA_…_GET`로 남아 있음 — 명명 관성으로 보이며, 트리거만 `STACK_RA_RUN_CAMOUT`으로 다름.)
 
 ---
 
@@ -250,9 +260,10 @@ Pick & Place 동작에는 진공 흡착이 필요합니다.
 | 항목 | 상태 |
 |---|---|
 | CAM 커브 수치 | ✅ **확인 완료** — Openness export (§4 참조) |
-| LC/RA 프로파일 실제 차이 | ✅ **확인 완료** — 완전 동일한 커브 |
+| LC/RA 프로파일 실제 차이 | ✅ **확인 완료** — 완전 동일한 커브 (Z_GET/Z_PUT/X_GET/X_PUT 4종) |
 | GET/PUT 동작 타이밍 | ✅ **확인 완료** — GET: 0°-22° Z하강, 20°-180° R이동; PUT: 180°-340° R이동, 252°-274° Z하강 |
-| CAMIN SyncMode/StartMode 파라미터 | ❌ FB XML에 명시 없음 — 기본값 또는 런타임 설정 추정 |
-| 정규화 Y=1이 실제 물리 단위로 얼마인지 | ❌ SlaveScaling, SlaveOffset DB 값 확인 필요 |
+| 축 ↔ CAM TO ↔ Phase 매핑 | ✅ **확인 완료** — FB CAMIN 호출 인자로 검증 (§6). LC_RUN: Cathode=PUT(Axis11/12), Anode=GET(Axis26/27) |
+| CAMIN SyncMode/StartMode 파라미터 | 🔶 **부분 확인** — `MC_CAMIN` 인터페이스에 `MasterSyncPosition`·`SyncProfileReference`·`MasterStartDistance`·`Velocity/Accel/Decel/Jerk`·`ApplicationMode`·`SyncDirection` 존재. 모든 CAMIN 호출이 동일 상수 4개(`0.01`, `3`, `0`, `2`)를 전달 — 값↔파라미터 정확 매핑은 XML 정본 필요(.md 다이제스트가 함수 호출의 파라미터명을 생략하므로 `FB_Camin_STACK_LC_RUN.xml` 확인) |
+| 정규화 Y=1이 실제 물리 단위로 얼마인지 | 🔶 **확인됨(정적 산출 불가)** — `DB_GdbCam`의 `CamData.SlaveScaling/SlaveOffset`에 export StartValue 없음 → 런타임/레시피에서 기록(FB Network 5·7이 `CamData → CamIn` 복사). 정적 export로는 물리 수치 불명, 런타임 모니터링 필요 |
 | "Reverse" 명칭의 물리적 의미 (반전/뒤집기) | ❌ 전극 배향 플립 여부 불명확 — 기구 도면 확인 필요 |
-| GET 완료 후 VAC 확인 → 다음 단계 전환 조건 | ❌ IO/Sequence FB 별도 확인 필요 |
+| GET 완료 후 VAC 확인 → 다음 단계 전환 조건 | ❌ IO/Sequence FB 별도 확인 필요 (VAC DI: iDB5031/5032/5037/5038 — DB 번호는 §7에서 확인 완료) |
